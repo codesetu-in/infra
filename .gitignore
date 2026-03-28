@@ -1,0 +1,35 @@
+# deps
+node_modules/
+.pnp
+.pnp.js
+
+# build
+dist/
+build/
+.next/
+out/
+
+# test / coverage
+coverage/
+
+# env
+.env
+.env.*
+!.env.example
+
+# turbo / cache
+.turbo/
+.cache/
+
+# misc
+*.log
+*.tsbuildinfo
+.DS_Store
+Thumbs.db
+
+# terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+!*.tfvars.example
