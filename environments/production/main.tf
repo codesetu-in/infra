@@ -9,9 +9,9 @@ terraform {
 }
 
 locals {
-  environment = "staging"
+  environment = "production"
   name_prefix = "deploycloud"
-  domain_name = "staging.deploycloud.app"
+  domain_name = "deploycloud.app"
   aws_region  = "us-east-1"
 
   azs = ["${local.aws_region}a", "${local.aws_region}b"]
@@ -51,16 +51,16 @@ module "networking" {
   environment = local.environment
   azs         = local.azs
 
-  vpc_cidr              = "10.1.0.0/16"
-  public_subnet_cidrs   = ["10.1.1.0/24", "10.1.2.0/24"]
-  private_subnet_cidrs  = ["10.1.10.0/24", "10.1.11.0/24"]
-  database_subnet_cidrs = ["10.1.20.0/24", "10.1.21.0/24"]
+  vpc_cidr              = "10.0.0.0/16"
+  public_subnet_cidrs   = ["10.0.1.0/24", "10.0.2.0/24"]
+  private_subnet_cidrs  = ["10.0.10.0/24", "10.0.11.0/24"]
+  database_subnet_cidrs = ["10.0.20.0/24", "10.0.21.0/24"]
 
-  # Single NAT reduces cost for staging
-  single_nat_gateway = true
+  # Production: one NAT per AZ for resilience
+  single_nat_gateway = false
 }
 
-# ── Build (CodeBuild + ECR) — created first so ECS can reference the image ───
+# ── Build (CodeBuild + ECR) ───────────────────────────────────────────────────
 
 module "build" {
   source = "../../modules/build"
@@ -69,7 +69,7 @@ module "build" {
   environment           = local.environment
   ecr_repository_name   = "deploycloud/app"
   image_retention_count = 30
-  compute_type          = "BUILD_GENERAL1_SMALL"
+  compute_type          = "BUILD_GENERAL1_MEDIUM"
   build_timeout         = 30
 }
 
@@ -87,13 +87,13 @@ module "database" {
   database_name  = "deploycloud"
   engine_version = "16.4"
 
-  # Staging: small capacity, can scale to near-zero
+  # Production: wider capacity range for traffic spikes
   min_capacity = 0.5
-  max_capacity = 4
+  max_capacity = 8
 
-  backup_retention_period = 3
-  deletion_protection     = false
-  skip_final_snapshot     = true
+  backup_retention_period = 7
+  deletion_protection     = true
+  skip_final_snapshot     = false
 }
 
 # ── Cache (ElastiCache Redis) ─────────────────────────────────────────────────
@@ -108,16 +108,16 @@ module "cache" {
   security_group_ids = [module.networking.redis_security_group_id]
 
   engine_version = "7.1"
-  node_type      = "cache.t4g.micro"
+  node_type      = "cache.t4g.small"
 
-  # Staging: single node, no Multi-AZ
-  multi_az_enabled   = false
-  num_cache_clusters = 1
+  # Production: Multi-AZ with one replica for failover
+  multi_az_enabled   = true
+  num_cache_clusters = 2
+
+  snapshot_retention_limit = 3
 }
 
 # ── ECS (Fargate) ─────────────────────────────────────────────────────────────
-# Certificate is resolved after DNS module runs, so we use a placeholder on first
-# apply and update after DNS validation completes.
 
 module "ecs" {
   source = "../../modules/ecs"
@@ -137,18 +137,19 @@ module "ecs" {
   container_port    = 3000
   health_check_path = "/health"
 
-  # Staging: smaller tasks, fewer replicas
-  task_cpu      = 256
-  task_memory   = 512
-  desired_count = 1
-  min_capacity  = 1
-  max_capacity  = 4
+  # Production: larger tasks, more replicas, broader scaling range
+  task_cpu      = 1024
+  task_memory   = 2048
+  desired_count = 3
+  min_capacity  = 2
+  max_capacity  = 20
 
-  fargate_spot_weight = 4
-  log_retention_days  = 30
+  # Smaller Spot weight for production to reduce interruption risk
+  fargate_spot_weight = 2
+  log_retention_days  = 90
 
   environment_variables = {
-    NODE_ENV   = "staging"
+    NODE_ENV   = "production"
     APP_DOMAIN = local.domain_name
   }
 
@@ -187,7 +188,8 @@ module "cdn" {
   domain_name  = local.domain_name
   zone_id      = module.dns.zone_id
 
-  price_class    = "PriceClass_100"
+  # Production: serve from more edge locations
+  price_class    = "PriceClass_All"
   waf_rate_limit = 2000
 }
 
@@ -205,6 +207,6 @@ module "monitoring" {
   target_group_arn_suffix = module.ecs.target_group_arn_suffix
 
   sns_email_endpoint   = var.alerts_email
-  cpu_alarm_threshold  = 85
-  error_rate_threshold = 5
+  cpu_alarm_threshold  = 80
+  error_rate_threshold = 1
 }

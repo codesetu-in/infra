@@ -1,0 +1,228 @@
+name: Terraform Plan
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "environments/**"
+      - "modules/**"
+      - "*.tf"
+      - ".github/workflows/plan.yml"
+
+permissions:
+  id-token: write      # OIDC token for aws-actions/configure-aws-credentials
+  contents: read
+  pull-requests: write # Post plan comment
+
+concurrency:
+  group: terraform-plan-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Staging plan ─────────────────────────────────────────────────────────────
+  plan-staging:
+    name: Plan / staging
+    runs-on: ubuntu-latest
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      WORKING_DIR: environments/staging
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (staging)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_STAGING }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~> 1.12"
+          terraform_wrapper: true
+
+      - name: Terraform Format check
+        id: fmt
+        run: terraform fmt -check -recursive
+        working-directory: ${{ env.WORKING_DIR }}
+        continue-on-error: true
+
+      - name: Terraform Init
+        id: init
+        run: terraform init -no-color
+        working-directory: ${{ env.WORKING_DIR }}
+
+      - name: Terraform Validate
+        id: validate
+        run: terraform validate -no-color
+        working-directory: ${{ env.WORKING_DIR }}
+
+      - name: Terraform Plan
+        id: plan
+        run: terraform plan -no-color -out=tfplan 2>&1 | tee plan.txt
+        working-directory: ${{ env.WORKING_DIR }}
+        continue-on-error: true
+
+      - name: Post plan comment (staging)
+        uses: actions/github-script@v7
+        env:
+          PLAN_OUTPUT: ${{ steps.plan.outputs.stdout }}
+        with:
+          script: |
+            const fs = require('fs');
+            const planText = fs.existsSync('${{ env.WORKING_DIR }}/plan.txt')
+              ? fs.readFileSync('${{ env.WORKING_DIR }}/plan.txt', 'utf8')
+              : '${{ steps.plan.outputs.stdout }}';
+
+            const truncated = planText.length > 60000
+              ? planText.substring(0, 60000) + '\n\n... (truncated)'
+              : planText;
+
+            const outcome = '${{ steps.plan.outcome }}';
+            const fmtOutcome = '${{ steps.fmt.outcome }}';
+
+            const body = `## Terraform Plan — staging
+
+            #### Format \`${{ steps.fmt.outcome }}\` | Init \`${{ steps.init.outcome }}\` | Validate \`${{ steps.validate.outcome }}\` | Plan \`${outcome}\`
+
+            <details><summary>Show Plan</summary>
+
+            \`\`\`terraform
+            ${truncated}
+            \`\`\`
+
+            </details>
+
+            *Triggered by @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
+
+            // Delete previous bot comments for this PR to keep it tidy
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            for (const comment of comments) {
+              if (comment.user.type === 'Bot' && comment.body.includes('Terraform Plan — staging')) {
+                await github.rest.issues.deleteComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: comment.id,
+                });
+              }
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+      - name: Fail if plan failed
+        if: steps.plan.outcome == 'failure'
+        run: exit 1
+
+  # ── Production plan ───────────────────────────────────────────────────────────
+  plan-production:
+    name: Plan / production
+    runs-on: ubuntu-latest
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      WORKING_DIR: environments/production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (production)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_PRODUCTION }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~> 1.12"
+          terraform_wrapper: true
+
+      - name: Terraform Format check
+        id: fmt
+        run: terraform fmt -check -recursive
+        working-directory: ${{ env.WORKING_DIR }}
+        continue-on-error: true
+
+      - name: Terraform Init
+        id: init
+        run: terraform init -no-color
+        working-directory: ${{ env.WORKING_DIR }}
+
+      - name: Terraform Validate
+        id: validate
+        run: terraform validate -no-color
+        working-directory: ${{ env.WORKING_DIR }}
+
+      - name: Terraform Plan
+        id: plan
+        run: terraform plan -no-color -out=tfplan 2>&1 | tee plan.txt
+        working-directory: ${{ env.WORKING_DIR }}
+        continue-on-error: true
+
+      - name: Post plan comment (production)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const planText = fs.existsSync('${{ env.WORKING_DIR }}/plan.txt')
+              ? fs.readFileSync('${{ env.WORKING_DIR }}/plan.txt', 'utf8')
+              : '';
+
+            const truncated = planText.length > 60000
+              ? planText.substring(0, 60000) + '\n\n... (truncated)'
+              : planText;
+
+            const outcome = '${{ steps.plan.outcome }}';
+
+            const body = `## Terraform Plan — production
+
+            #### Format \`${{ steps.fmt.outcome }}\` | Init \`${{ steps.init.outcome }}\` | Validate \`${{ steps.validate.outcome }}\` | Plan \`${outcome}\`
+
+            <details><summary>Show Plan</summary>
+
+            \`\`\`terraform
+            ${truncated}
+            \`\`\`
+
+            </details>
+
+            *Triggered by @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            for (const comment of comments) {
+              if (comment.user.type === 'Bot' && comment.body.includes('Terraform Plan — production')) {
+                await github.rest.issues.deleteComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: comment.id,
+                });
+              }
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+      - name: Fail if plan failed
+        if: steps.plan.outcome == 'failure'
+        run: exit 1

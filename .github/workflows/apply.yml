@@ -1,0 +1,93 @@
+name: Terraform Apply
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "environments/**"
+      - "modules/**"
+      - "*.tf"
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: terraform-apply
+  cancel-in-progress: false # Never cancel an in-progress apply
+
+jobs:
+  # ── Staging (auto-approve on merge) ──────────────────────────────────────────
+  apply-staging:
+    name: Apply / staging
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      WORKING_DIR: environments/staging
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (staging)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_STAGING }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~> 1.12"
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        run: terraform init -no-color
+        working-directory: ${{ env.WORKING_DIR }}
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -no-color
+        working-directory: ${{ env.WORKING_DIR }}
+
+  # ── Production (manual approval gate via GitHub environment) ─────────────────
+  apply-production:
+    name: Apply / production
+    runs-on: ubuntu-latest
+    # The "production" GitHub environment must have a required reviewer configured
+    # in repository Settings → Environments to enforce manual approval.
+    environment: production
+    needs: [apply-staging]
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      WORKING_DIR: environments/production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (production)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_PRODUCTION }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~> 1.12"
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        run: terraform init -no-color
+        working-directory: ${{ env.WORKING_DIR }}
+
+      - name: Terraform Plan (confirmation step)
+        run: terraform plan -no-color -detailed-exitcode
+        working-directory: ${{ env.WORKING_DIR }}
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -no-color
+        working-directory: ${{ env.WORKING_DIR }}
