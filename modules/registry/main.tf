@@ -15,26 +15,15 @@ resource "azurerm_container_registry" "main" {
   resource_group_name = var.resource_group_name
   location            = data.azurerm_resource_group.main.location
   sku                 = var.acr_sku
+  admin_enabled       = false
 
-  # Admin account disabled — use Managed Identity for pull/push
-  admin_enabled = false
-
-  # Geo-replication for production (Standard/Premium only)
+  # Geo-replication for Standard/Premium tiers
   dynamic "georeplications" {
     for_each = var.geo_replication_regions
     content {
-      location                  = georeplications.value
-      zone_redundancy_enabled   = false
-      tags                      = {}
-    }
-  }
-
-  # Retention policy for untagged manifests (Premium only)
-  dynamic "retention_policy" {
-    for_each = var.acr_sku == "Premium" ? [1] : []
-    content {
-      days    = var.untagged_retention_days
-      enabled = true
+      location                = georeplications.value
+      zone_redundancy_enabled = false
+      tags                    = {}
     }
   }
 
@@ -62,14 +51,13 @@ resource "azurerm_role_assignment" "acr_push" {
 }
 
 # ── Azure Service Bus (replaces AWS SQS) ─────────────────────────────────────
+# Note: azurerm uses "servicebus" (no underscore) for Service Bus resource types.
 
-resource "azurerm_service_bus_namespace" "main" {
+resource "azurerm_servicebus_namespace" "main" {
   name                = "${local.name_prefix}-sb"
   location            = data.azurerm_resource_group.main.location
   resource_group_name = var.resource_group_name
   sku                 = "Standard" # Standard has DLQ support; Basic does not
-
-  # Minimum TLS version
   minimum_tls_version = "1.2"
 
   tags = {
@@ -79,43 +67,31 @@ resource "azurerm_service_bus_namespace" "main" {
   }
 }
 
-resource "azurerm_service_bus_queue" "builds" {
+resource "azurerm_servicebus_queue" "builds" {
   name         = "builds"
-  namespace_id = azurerm_service_bus_namespace.main.id
+  namespace_id = azurerm_servicebus_namespace.main.id
 
-  # 30-minute lock for long builds; renew via API
-  lock_duration = "PT5M" # Max 5 min per lock; build-engine renews automatically
-
-  # Max delivery attempts before DLQ
-  max_delivery_count = 3
-
-  # Message TTL — builds older than 24h are expired
-  default_message_time_to_live = "P1D"
-
-  # Dead-letter queue — keeps failed build requests for inspection
+  lock_duration                        = "PT5M"
+  max_delivery_count                   = 3
   dead_lettering_on_message_expiration = true
-
-  # Message size: 256 KB (Standard tier max)
-  max_size_in_megabytes = 1024
+  max_size_in_megabytes                = 1024
 }
 
-resource "azurerm_service_bus_queue" "builds_dlq_forward" {
-  # Separate queue for manual reprocessing of DLQ'd builds
+resource "azurerm_servicebus_queue" "builds_dlq_forward" {
   name         = "builds-replay"
-  namespace_id = azurerm_service_bus_namespace.main.id
+  namespace_id = azurerm_servicebus_namespace.main.id
 
   lock_duration                        = "PT5M"
   max_delivery_count                   = 1
-  default_message_time_to_live         = "P7D"
   dead_lettering_on_message_expiration = false
   max_size_in_megabytes                = 1024
 }
 
-# ── Shared Access Policy for build-engine (Send + Listen on builds queue) ────
+# ── Shared Access Policies ────────────────────────────────────────────────────
 
 resource "azurerm_servicebus_queue_authorization_rule" "build_engine" {
   name     = "build-engine"
-  queue_id = azurerm_service_bus_queue.builds.id
+  queue_id = azurerm_servicebus_queue.builds.id
 
   listen = true
   send   = false
@@ -124,7 +100,7 @@ resource "azurerm_servicebus_queue_authorization_rule" "build_engine" {
 
 resource "azurerm_servicebus_queue_authorization_rule" "platform_api" {
   name     = "platform-api"
-  queue_id = azurerm_service_bus_queue.builds.id
+  queue_id = azurerm_servicebus_queue.builds.id
 
   listen = false
   send   = true

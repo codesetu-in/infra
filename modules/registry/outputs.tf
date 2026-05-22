@@ -15,17 +15,17 @@ output "acr_login_server" {
 
 output "service_bus_namespace_id" {
   description = "Service Bus Namespace resource ID"
-  value       = azurerm_service_bus_namespace.main.id
+  value       = azurerm_servicebus_namespace.main.id
 }
 
 output "service_bus_namespace_name" {
   description = "Service Bus Namespace name"
-  value       = azurerm_service_bus_namespace.main.name
+  value       = azurerm_servicebus_namespace.main.name
 }
 
 output "builds_queue_name" {
   description = "Name of the builds Service Bus queue"
-  value       = azurerm_service_bus_queue.builds.name
+  value       = azurerm_servicebus_queue.builds.name
 }
 
 output "sb_build_engine_conn_secret_name" {

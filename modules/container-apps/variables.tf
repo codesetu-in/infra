@@ -23,11 +23,6 @@ variable "container_apps_subnet_id" {
   type        = string
 }
 
-variable "key_vault_id" {
-  description = "Key Vault resource ID for managed identity secret access"
-  type        = string
-}
-
 variable "acr_login_server" {
   description = "ACR login server URL (e.g. deploycloud.azurecr.io)"
   type        = string

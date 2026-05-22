@@ -59,7 +59,6 @@ module "container_apps" {
   environment              = local.environment
   resource_group_name      = module.networking.resource_group_name
   container_apps_subnet_id = module.networking.container_apps_subnet_id
-  key_vault_id             = module.container_apps.key_vault_id
 
   acr_login_server   = module.registry.acr_login_server
   log_retention_days = 90

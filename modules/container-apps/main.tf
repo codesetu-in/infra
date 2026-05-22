@@ -9,7 +9,6 @@ data "azurerm_resource_group" "main" {
 data "azurerm_client_config" "current" {}
 
 # ── Managed Identity for platform services ────────────────────────────────────
-# Replaces AWS IAM roles — no static credentials needed.
 
 resource "azurerm_user_assigned_identity" "platform" {
   name                = "${local.name_prefix}-platform-id"
@@ -23,14 +22,41 @@ resource "azurerm_user_assigned_identity" "platform" {
   }
 }
 
-# ── Key Vault access for managed identity ─────────────────────────────────────
+# ── Key Vault for platform environment ───────────────────────────────────────
+# Created before Container Apps so secrets can be referenced at deploy time.
 
-resource "azurerm_key_vault_access_policy" "platform" {
-  key_vault_id = var.key_vault_id
-  tenant_id    = data.azurerm_client_config.current.tenant_id
-  object_id    = azurerm_user_assigned_identity.platform.principal_id
+resource "azurerm_key_vault" "main" {
+  name                = "${local.name_prefix}-kv"
+  location            = data.azurerm_resource_group.main.location
+  resource_group_name = var.resource_group_name
+  tenant_id           = data.azurerm_client_config.current.tenant_id
+  sku_name            = "standard"
 
-  secret_permissions = ["Get", "List"]
+  purge_protection_enabled   = var.environment == "production"
+  soft_delete_retention_days = 7
+
+  # Terraform operator access
+  access_policy {
+    tenant_id = data.azurerm_client_config.current.tenant_id
+    object_id = data.azurerm_client_config.current.object_id
+
+    secret_permissions = ["Get", "List", "Set", "Delete", "Purge", "Recover"]
+    key_permissions    = ["Get", "List", "Create", "Delete", "Purge"]
+  }
+
+  # Managed identity access for Container Apps (read secrets at runtime)
+  access_policy {
+    tenant_id = data.azurerm_client_config.current.tenant_id
+    object_id = azurerm_user_assigned_identity.platform.principal_id
+
+    secret_permissions = ["Get", "List"]
+  }
+
+  tags = {
+    Environment = var.environment
+    Project     = var.name_prefix
+    ManagedBy   = "terraform"
+  }
 }
 
 # ── Log Analytics Workspace (required by Container Apps Environment) ──────────
@@ -50,17 +76,13 @@ resource "azurerm_log_analytics_workspace" "main" {
 }
 
 # ── Container Apps Environment ────────────────────────────────────────────────
-# Replaces ECS cluster + ALB. Handles TLS, scaling, and ingress natively.
 
 resource "azurerm_container_app_environment" "main" {
   name                       = "${local.name_prefix}-cae"
   location                   = data.azurerm_resource_group.main.location
   resource_group_name        = var.resource_group_name
   log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
-
-  # VNet injection — Container Apps run inside the private subnet
-  infrastructure_subnet_id       = var.container_apps_subnet_id
-  internal_load_balancer_enabled = false # External = public HTTPS ingress
+  infrastructure_subnet_id   = var.container_apps_subnet_id
 
   tags = {
     Environment = var.environment
@@ -92,21 +114,21 @@ resource "azurerm_container_app" "api" {
       cpu    = var.api_cpu
       memory = var.api_memory
 
-      # Environment variables injected from Key Vault via managed identity
       dynamic "env" {
         for_each = var.api_environment_variables
+        iterator = plain_env
         content {
-          name  = env.key
-          value = env.value
+          name  = plain_env.key
+          value = plain_env.value
         }
       }
 
-      # Secrets fetched from Key Vault — referenced by secret name below
       dynamic "env" {
         for_each = var.api_secret_refs
+        iterator = secret_env
         content {
-          name        = env.key
-          secret_name = env.value
+          name        = secret_env.key
+          secret_name = secret_env.value
         }
       }
 
@@ -116,7 +138,7 @@ resource "azurerm_container_app" "api" {
         port      = var.api_port
 
         initial_delay           = 15
-        period_seconds          = 30
+        interval_seconds        = 30
         failure_count_threshold = 3
       }
 
@@ -125,19 +147,17 @@ resource "azurerm_container_app" "api" {
         path      = var.health_check_path
         port      = var.api_port
 
-        period_seconds          = 10
+        interval_seconds        = 10
         failure_count_threshold = 3
       }
     }
 
-    # Scale rules: HTTP-based autoscaling
     http_scale_rule {
       name                = "http-scale"
-      concurrent_requests = 100
+      concurrent_requests = "100"
     }
   }
 
-  # Secrets pulled from Key Vault — container references these by name
   dynamic "secret" {
     for_each = var.api_key_vault_secrets
     content {
@@ -195,9 +215,10 @@ resource "azurerm_container_app" "dashboard" {
 
       dynamic "env" {
         for_each = var.dashboard_environment_variables
+        iterator = dash_env
         content {
-          name  = env.key
-          value = env.value
+          name  = dash_env.key
+          value = dash_env.value
         }
       }
 
@@ -207,14 +228,14 @@ resource "azurerm_container_app" "dashboard" {
         port      = 3000
 
         initial_delay           = 20
-        period_seconds          = 30
+        interval_seconds        = 30
         failure_count_threshold = 3
       }
     }
 
     http_scale_rule {
       name                = "http-scale"
-      concurrent_requests = 50
+      concurrent_requests = "50"
     }
   }
 
@@ -232,34 +253,6 @@ resource "azurerm_container_app" "dashboard" {
   registry {
     server   = var.acr_login_server
     identity = azurerm_user_assigned_identity.platform.id
-  }
-
-  tags = {
-    Environment = var.environment
-    Project     = var.name_prefix
-    ManagedBy   = "terraform"
-  }
-}
-
-# ── Key Vault for platform environment ───────────────────────────────────────
-
-resource "azurerm_key_vault" "main" {
-  name                = "${local.name_prefix}-kv"
-  location            = data.azurerm_resource_group.main.location
-  resource_group_name = var.resource_group_name
-  tenant_id           = data.azurerm_client_config.current.tenant_id
-  sku_name            = "standard"
-
-  purge_protection_enabled   = var.environment == "production"
-  soft_delete_retention_days = 7
-
-  # Operator access (for running Terraform and manual secret management)
-  access_policy {
-    tenant_id = data.azurerm_client_config.current.tenant_id
-    object_id = data.azurerm_client_config.current.object_id
-
-    secret_permissions = ["Get", "List", "Set", "Delete", "Purge", "Recover"]
-    key_permissions    = ["Get", "List", "Create", "Delete", "Purge"]
   }
 
   tags = {
