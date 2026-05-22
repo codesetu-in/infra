@@ -1,116 +1,106 @@
 terraform {
   required_version = ">= 1.12.0"
   required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 6.0"
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 4.0"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
     }
   }
 }
 
-provider "aws" {
-  region = var.aws_region
-
-  default_tags {
-    tags = {
-      Project   = "deploycloud"
-      ManagedBy = "terraform"
-    }
-  }
+provider "azurerm" {
+  features {}
 }
 
 locals {
   name_prefix = "deploycloud"
 }
 
-# ── KMS ──────────────────────────────────────────────────────────────────────
+data "azurerm_client_config" "current" {}
 
-resource "aws_kms_key" "terraform_state" {
-  description             = "Encrypts Terraform remote state in S3 and DynamoDB"
-  deletion_window_in_days = 10
-  enable_key_rotation     = true
-}
+# ── Resource Group ────────────────────────────────────────────────────────────
 
-resource "aws_kms_alias" "terraform_state" {
-  name          = "alias/${local.name_prefix}-terraform-state"
-  target_key_id = aws_kms_key.terraform_state.key_id
-}
+resource "azurerm_resource_group" "tfstate" {
+  name     = "${local.name_prefix}-tfstate-rg"
+  location = var.azure_region
 
-# ── S3 state bucket ──────────────────────────────────────────────────────────
-
-resource "aws_s3_bucket" "terraform_state" {
-  bucket = "${local.name_prefix}-tfstate-${var.aws_account_id}"
-
-  lifecycle {
-    prevent_destroy = true
+  tags = {
+    Project   = "deploycloud"
+    ManagedBy = "terraform"
   }
 }
 
-resource "aws_s3_bucket_versioning" "terraform_state" {
-  bucket = aws_s3_bucket.terraform_state.id
-  versioning_configuration {
-    status = "Enabled"
-  }
+# ── Random suffix for globally unique names ───────────────────────────────────
+
+resource "random_id" "suffix" {
+  byte_length = 4
 }
 
-resource "aws_s3_bucket_server_side_encryption_configuration" "terraform_state" {
-  bucket = aws_s3_bucket.terraform_state.id
+# ── Storage Account for Terraform State ──────────────────────────────────────
+# Azure Blob Storage backend natively handles state locking via blob leases
+# (no separate DynamoDB equivalent is needed).
 
-  rule {
-    apply_server_side_encryption_by_default {
-      kms_master_key_id = aws_kms_key.terraform_state.arn
-      sse_algorithm     = "aws:kms"
-    }
-    bucket_key_enabled = true
-  }
-}
+resource "azurerm_storage_account" "tfstate" {
+  name                = "${local.name_prefix}tfstate${random_id.suffix.hex}"
+  resource_group_name = azurerm_resource_group.tfstate.name
+  location            = azurerm_resource_group.tfstate.location
 
-resource "aws_s3_bucket_public_access_block" "terraform_state" {
-  bucket = aws_s3_bucket.terraform_state.id
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
 
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
+  min_tls_version           = "TLS1_2"
+  https_traffic_only_enabled = true
 
-resource "aws_s3_bucket_lifecycle_configuration" "terraform_state" {
-  bucket = aws_s3_bucket.terraform_state.id
+  blob_properties {
+    versioning_enabled = true
 
-  rule {
-    id     = "expire-old-versions"
-    status = "Enabled"
-
-    filter {}
-
-    noncurrent_version_expiration {
-      noncurrent_days = 90
+    delete_retention_policy {
+      days = 90
     }
 
-    abort_incomplete_multipart_upload {
-      days_after_initiation = 7
+    container_delete_retention_policy {
+      days = 30
     }
   }
+
+  tags = azurerm_resource_group.tfstate.tags
 }
 
-# ── DynamoDB lock table ───────────────────────────────────────────────────────
+resource "azurerm_storage_container" "tfstate" {
+  name                  = "tfstate"
+  storage_account_id    = azurerm_storage_account.tfstate.id
+  container_access_type = "private"
+}
 
-resource "aws_dynamodb_table" "terraform_locks" {
-  name         = "${local.name_prefix}-tfstate-locks"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "LockID"
+# ── Key Vault for bootstrap secrets ──────────────────────────────────────────
 
-  attribute {
-    name = "LockID"
-    type = "S"
+resource "azurerm_key_vault" "bootstrap" {
+  name                = "${local.name_prefix}-kv-${random_id.suffix.hex}"
+  resource_group_name = azurerm_resource_group.tfstate.name
+  location            = azurerm_resource_group.tfstate.location
+  tenant_id           = data.azurerm_client_config.current.tenant_id
+  sku_name            = "standard"
+
+  purge_protection_enabled   = true
+  soft_delete_retention_days = 7
+
+  # Allow the operator running bootstrap to manage secrets
+  access_policy {
+    tenant_id = data.azurerm_client_config.current.tenant_id
+    object_id = data.azurerm_client_config.current.object_id
+
+    secret_permissions = [
+      "Get", "List", "Set", "Delete", "Purge", "Recover"
+    ]
+    key_permissions = [
+      "Get", "List", "Create", "Delete", "Purge", "Recover",
+      "GetRotationPolicy", "SetRotationPolicy"
+    ]
   }
 
-  server_side_encryption {
-    enabled     = true
-    kms_key_arn = aws_kms_key.terraform_state.arn
-  }
-
-  point_in_time_recovery {
-    enabled = true
-  }
+  tags = azurerm_resource_group.tfstate.tags
 }

@@ -1,5 +1,25 @@
+variable "name_prefix" {
+  description = "Prefix applied to resource names"
+  type        = string
+}
+
+variable "environment" {
+  description = "Deployment environment"
+  type        = string
+
+  validation {
+    condition     = contains(["staging", "production"], var.environment)
+    error_message = "Must be 'staging' or 'production'."
+  }
+}
+
+variable "resource_group_name" {
+  description = "Resource group name"
+  type        = string
+}
+
 variable "domain_name" {
-  description = "Root domain name for the hosted zone (e.g. deploycloud.app)"
+  description = "Root domain name for the DNS zone (e.g. deploycloud.app)"
   type        = string
 
   validation {
@@ -9,32 +29,18 @@ variable "domain_name" {
 }
 
 variable "create_zone" {
-  description = "Whether to create a new Route53 hosted zone. Set false to use an existing zone."
+  description = "Whether to create a new DNS zone. Set false to use an existing zone."
   type        = bool
   default     = true
 }
 
-variable "alb_dns_name" {
-  description = "DNS name of the ALB for the wildcard alias record"
+variable "container_apps_default_domain" {
+  description = "Container Apps Environment default domain for CNAME records (e.g. {env-name}.{region}.azurecontainerapps.io)"
   type        = string
 }
 
-variable "alb_zone_id" {
-  description = "Route53 hosted zone ID of the ALB"
+variable "custom_domain_verification_id" {
+  description = "Container Apps Environment custom domain verification ID (for TXT record)"
   type        = string
-}
-
-variable "environment" {
-  description = "Deployment environment (used for tagging)"
-  type        = string
-
-  validation {
-    condition     = contains(["staging", "production"], var.environment)
-    error_message = "Must be 'staging' or 'production'."
-  }
-}
-
-variable "name_prefix" {
-  description = "Prefix applied to resource names"
-  type        = string
+  default     = null
 }

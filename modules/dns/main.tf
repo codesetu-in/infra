@@ -1,79 +1,74 @@
-# ── Hosted Zone ───────────────────────────────────────────────────────────────
+# ── Azure DNS Zone ────────────────────────────────────────────────────────────
 
-resource "aws_route53_zone" "main" {
-  count   = var.create_zone ? 1 : 0
-  name    = var.domain_name
-  comment = "Managed by Terraform — deploycloud ${var.environment}"
+resource "azurerm_dns_zone" "main" {
+  count               = var.create_zone ? 1 : 0
+  name                = var.domain_name
+  resource_group_name = var.resource_group_name
+
+  tags = {
+    Environment = var.environment
+    Project     = var.name_prefix
+    ManagedBy   = "terraform"
+  }
 }
 
-data "aws_route53_zone" "main" {
-  count = var.create_zone ? 0 : 1
-  name  = var.domain_name
+data "azurerm_dns_zone" "main" {
+  count               = var.create_zone ? 0 : 1
+  name                = var.domain_name
+  resource_group_name = var.resource_group_name
 }
 
 locals {
-  zone_id   = var.create_zone ? aws_route53_zone.main[0].zone_id : data.aws_route53_zone.main[0].zone_id
-  zone_name = var.create_zone ? aws_route53_zone.main[0].name : data.aws_route53_zone.main[0].name
+  zone_name = var.create_zone ? azurerm_dns_zone.main[0].name : data.azurerm_dns_zone.main[0].name
+  zone_id   = var.create_zone ? azurerm_dns_zone.main[0].id : data.azurerm_dns_zone.main[0].id
 }
 
-# ── ACM Certificate (regional, for ALB) ───────────────────────────────────────
+# ── Wildcard CNAME → Container Apps Environment default domain ────────────────
+# Apps get a URL like myapp.{default_domain}; the wildcard CNAME maps
+# *.deploycloud.app → the Container Apps environment ingress.
 
-resource "aws_acm_certificate" "main" {
-  domain_name               = var.domain_name
-  subject_alternative_names = ["*.${var.domain_name}"]
-  validation_method         = "DNS"
+resource "azurerm_dns_cname_record" "wildcard" {
+  name                = "*"
+  zone_name           = local.zone_name
+  resource_group_name = var.resource_group_name
+  ttl                 = 300
+  record              = var.container_apps_default_domain
 
-  lifecycle {
-    create_before_destroy = true
+  tags = {
+    Environment = var.environment
+    ManagedBy   = "terraform"
   }
 }
 
-resource "aws_route53_record" "cert_validation" {
-  for_each = {
-    for dvo in aws_acm_certificate.main.domain_validation_options :
-    dvo.domain_name => {
-      name   = dvo.resource_record_name
-      record = dvo.resource_record_value
-      type   = dvo.resource_record_type
-    }
-  }
+resource "azurerm_dns_cname_record" "apex_www" {
+  name                = "www"
+  zone_name           = local.zone_name
+  resource_group_name = var.resource_group_name
+  ttl                 = 300
+  record              = var.container_apps_default_domain
 
-  zone_id = local.zone_id
-  name    = each.value.name
-  type    = each.value.type
-  records = [each.value.record]
-  ttl     = 60
-
-  allow_overwrite = true
-}
-
-resource "aws_acm_certificate_validation" "main" {
-  certificate_arn         = aws_acm_certificate.main.arn
-  validation_record_fqdns = [for r in aws_route53_record.cert_validation : r.fqdn]
-}
-
-# ── Wildcard A Record → ALB ───────────────────────────────────────────────────
-
-resource "aws_route53_record" "wildcard" {
-  zone_id = local.zone_id
-  name    = "*.${var.domain_name}"
-  type    = "A"
-
-  alias {
-    name                   = var.alb_dns_name
-    zone_id                = var.alb_zone_id
-    evaluate_target_health = true
+  tags = {
+    Environment = var.environment
+    ManagedBy   = "terraform"
   }
 }
 
-resource "aws_route53_record" "apex" {
-  zone_id = local.zone_id
-  name    = var.domain_name
-  type    = "A"
+# ── TXT verification record for Container Apps custom domain ──────────────────
+# Azure Container Apps requires a TXT record for custom domain ownership verification.
 
-  alias {
-    name                   = var.alb_dns_name
-    zone_id                = var.alb_zone_id
-    evaluate_target_health = true
+resource "azurerm_dns_txt_record" "aca_verification" {
+  count               = var.custom_domain_verification_id != null ? 1 : 0
+  name                = "asuid"
+  zone_name           = local.zone_name
+  resource_group_name = var.resource_group_name
+  ttl                 = 300
+
+  record {
+    value = var.custom_domain_verification_id
+  }
+
+  tags = {
+    Environment = var.environment
+    ManagedBy   = "terraform"
   }
 }

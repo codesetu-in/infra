@@ -10,9 +10,9 @@ on:
       - ".github/workflows/plan.yml"
 
 permissions:
-  id-token: write      # OIDC token for aws-actions/configure-aws-credentials
+  id-token: write
   contents: read
-  pull-requests: write # Post plan comment
+  pull-requests: write
 
 concurrency:
   group: terraform-plan-${{ github.ref }}
@@ -32,11 +32,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials (staging)
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Azure Login (staging)
+        uses: azure/login@v2
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN_STAGING }}
-          aws-region: us-east-1
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          use-oidc: true
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -68,8 +70,6 @@ jobs:
 
       - name: Post plan comment (staging)
         uses: actions/github-script@v7
-        env:
-          PLAN_OUTPUT: ${{ steps.plan.outputs.stdout }}
         with:
           script: |
             const fs = require('fs');
@@ -81,12 +81,9 @@ jobs:
               ? planText.substring(0, 60000) + '\n\n... (truncated)'
               : planText;
 
-            const outcome = '${{ steps.plan.outcome }}';
-            const fmtOutcome = '${{ steps.fmt.outcome }}';
-
             const body = `## Terraform Plan — staging
 
-            #### Format \`${{ steps.fmt.outcome }}\` | Init \`${{ steps.init.outcome }}\` | Validate \`${{ steps.validate.outcome }}\` | Plan \`${outcome}\`
+            #### Format \`${{ steps.fmt.outcome }}\` | Init \`${{ steps.init.outcome }}\` | Validate \`${{ steps.validate.outcome }}\` | Plan \`${{ steps.plan.outcome }}\`
 
             <details><summary>Show Plan</summary>
 
@@ -98,7 +95,6 @@ jobs:
 
             *Triggered by @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
 
-            // Delete previous bot comments for this PR to keep it tidy
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -129,6 +125,7 @@ jobs:
   plan-production:
     name: Plan / production
     runs-on: ubuntu-latest
+    environment: production
     env:
       TF_IN_AUTOMATION: "true"
       TF_INPUT: "false"
@@ -138,11 +135,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials (production)
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Azure Login (production)
+        uses: azure/login@v2
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN_PRODUCTION }}
-          aws-region: us-east-1
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          use-oidc: true
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -185,11 +184,9 @@ jobs:
               ? planText.substring(0, 60000) + '\n\n... (truncated)'
               : planText;
 
-            const outcome = '${{ steps.plan.outcome }}';
-
             const body = `## Terraform Plan — production
 
-            #### Format \`${{ steps.fmt.outcome }}\` | Init \`${{ steps.init.outcome }}\` | Validate \`${{ steps.validate.outcome }}\` | Plan \`${outcome}\`
+            #### Format \`${{ steps.fmt.outcome }}\` | Init \`${{ steps.init.outcome }}\` | Validate \`${{ steps.validate.outcome }}\` | Plan \`${{ steps.plan.outcome }}\`
 
             <details><summary>Show Plan</summary>
 

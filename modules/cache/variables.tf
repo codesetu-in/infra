@@ -1,11 +1,6 @@
 variable "name_prefix" {
   description = "Prefix applied to all resource names"
   type        = string
-
-  validation {
-    condition     = length(var.name_prefix) <= 20 && can(regex("^[a-z0-9-]+$", var.name_prefix))
-    error_message = "name_prefix must be lowercase alphanumeric with hyphens, max 20 chars."
-  }
 }
 
 variable "environment" {
@@ -18,58 +13,72 @@ variable "environment" {
   }
 }
 
-variable "subnet_ids" {
-  description = "Subnet IDs for the ElastiCache subnet group"
-  type        = list(string)
+variable "resource_group_name" {
+  description = "Name of the resource group to deploy into"
+  type        = string
+}
+
+variable "key_vault_id" {
+  description = "Key Vault resource ID for storing Redis credentials"
+  type        = string
+}
+
+variable "sku_name" {
+  description = "Redis SKU. Basic (~$16/mo) for staging, Standard (~$90/mo) for production with HA."
+  type        = string
+  default     = "Basic"
 
   validation {
-    condition     = length(var.subnet_ids) >= 2
-    error_message = "At least two subnets are required."
+    condition     = contains(["Basic", "Standard", "Premium"], var.sku_name)
+    error_message = "Must be Basic, Standard, or Premium."
   }
 }
 
-variable "security_group_ids" {
-  description = "Security group IDs for the Redis replication group"
-  type        = list(string)
-}
-
-variable "node_type" {
-  description = "ElastiCache node type"
+variable "sku_family" {
+  description = "Redis SKU family: C (Basic/Standard) or P (Premium)"
   type        = string
-  default     = "cache.t4g.small"
+  default     = "C"
 }
 
-variable "engine_version" {
-  description = "Redis engine version"
+variable "capacity" {
+  description = "Redis cache size (0=250MB, 1=1GB, 2=2.5GB, etc.)"
+  type        = number
+  default     = 0
+}
+
+variable "redis_version" {
+  description = "Redis major version"
+  type        = number
+  default     = 7
+}
+
+variable "maxmemory_policy" {
+  description = "Redis eviction policy"
   type        = string
-  default     = "7.1"
+  default     = "allkeys-lru"
 }
 
-variable "multi_az_enabled" {
-  description = "Enable Multi-AZ with automatic failover (requires num_cache_clusters >= 2)"
+variable "enable_private_endpoint" {
+  description = "Route Redis traffic through a private endpoint (production; requires Standard or Premium SKU)"
   type        = bool
   default     = false
 }
 
-variable "num_cache_clusters" {
-  description = "Number of cache clusters (primary + replicas). Must be >= 2 when multi_az_enabled."
-  type        = number
-  default     = 1
-
-  validation {
-    condition     = var.num_cache_clusters >= 1 && var.num_cache_clusters <= 6
-    error_message = "num_cache_clusters must be between 1 and 6."
-  }
-}
-
-variable "snapshot_retention_limit" {
-  description = "Days to retain automatic Redis snapshots"
-  type        = number
-  default     = 1
-}
-
-variable "maintenance_window" {
-  description = "Weekly maintenance window"
+variable "private_endpoint_subnet_id" {
+  description = "Subnet ID for the Redis private endpoint (required when enable_private_endpoint = true)"
   type        = string
-  default     = "sun:05:00-sun:06:00"
+  default     = null
+}
+
+variable "redis_private_dns_zone_id" {
+  description = "Private DNS zone ID for Redis private endpoint DNS resolution"
+  type        = string
+  default     = null
+}
+
+variable "persistence_connection_string" {
+  description = "Storage account connection string for AOF persistence (Standard/Premium only)"
+  type        = string
+  default     = null
+  sensitive   = true
 }

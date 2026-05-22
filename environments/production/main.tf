@@ -1,45 +1,38 @@
 terraform {
   required_version = ">= 1.12.0"
   required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 6.0"
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 4.0"
+    }
+    azuread = {
+      source  = "hashicorp/azuread"
+      version = "~> 3.0"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
+    }
+  }
+}
+
+provider "azurerm" {
+  features {
+    key_vault {
+      purge_soft_delete_on_destroy    = false
+      recover_soft_deleted_key_vaults = true
+    }
+    resource_group {
+      prevent_deletion_if_contains_resources = true
     }
   }
 }
 
 locals {
-  environment = "production"
-  name_prefix = "deploycloud"
-  domain_name = "deploycloud.app"
-  aws_region  = "us-east-1"
-
-  azs = ["${local.aws_region}a", "${local.aws_region}b"]
-}
-
-provider "aws" {
-  region = local.aws_region
-
-  default_tags {
-    tags = {
-      Environment = local.environment
-      Project     = "deploycloud"
-      ManagedBy   = "terraform"
-    }
-  }
-}
-
-provider "aws" {
-  alias  = "us_east_1"
-  region = "us-east-1"
-
-  default_tags {
-    tags = {
-      Environment = local.environment
-      Project     = "deploycloud"
-      ManagedBy   = "terraform"
-    }
-  }
+  environment  = "production"
+  name_prefix  = "deploycloud"
+  domain_name  = "deploycloud.app"
+  azure_region = "eastus"
 }
 
 # ── Networking ────────────────────────────────────────────────────────────────
@@ -47,150 +40,140 @@ provider "aws" {
 module "networking" {
   source = "../../modules/networking"
 
-  name_prefix = local.name_prefix
-  environment = local.environment
-  azs         = local.azs
+  name_prefix  = local.name_prefix
+  environment  = local.environment
+  azure_region = local.azure_region
 
-  vpc_cidr              = "10.0.0.0/16"
-  public_subnet_cidrs   = ["10.0.1.0/24", "10.0.2.0/24"]
-  private_subnet_cidrs  = ["10.0.10.0/24", "10.0.11.0/24"]
-  database_subnet_cidrs = ["10.0.20.0/24", "10.0.21.0/24"]
-
-  # Production: one NAT per AZ for resilience
-  single_nat_gateway = false
+  vnet_cidr                    = "10.0.0.0/16"
+  container_apps_subnet_cidr   = "10.0.0.0/23"
+  database_subnet_cidr         = "10.0.4.0/24"
+  private_endpoint_subnet_cidr = "10.0.5.0/24"
 }
 
-# ── Build (CodeBuild + ECR) ───────────────────────────────────────────────────
+# ── Container Apps + Key Vault ────────────────────────────────────────────────
 
-module "build" {
-  source = "../../modules/build"
+module "container_apps" {
+  source = "../../modules/container-apps"
 
-  name_prefix           = local.name_prefix
-  environment           = local.environment
-  ecr_repository_name   = "deploycloud/app"
-  image_retention_count = 30
-  compute_type          = "BUILD_GENERAL1_MEDIUM"
-  build_timeout         = 30
+  name_prefix              = local.name_prefix
+  environment              = local.environment
+  resource_group_name      = module.networking.resource_group_name
+  container_apps_subnet_id = module.networking.container_apps_subnet_id
+  key_vault_id             = module.container_apps.key_vault_id
+
+  acr_login_server   = module.registry.acr_login_server
+  log_retention_days = 90
+
+  # Production: always have at least 1 replica, scale up aggressively
+  api_min_replicas       = 1
+  api_max_replicas       = 20
+  api_cpu                = 1.0
+  api_memory             = "2Gi"
+  dashboard_min_replicas = 1
+  dashboard_max_replicas = 5
+  dashboard_cpu          = 0.5
+  dashboard_memory       = "1Gi"
+
+  api_environment_variables = {
+    NODE_ENV   = "production"
+    APP_DOMAIN = local.domain_name
+    PORT       = "3001"
+    AZURE_CLIENT_ID = module.container_apps.platform_identity_client_id
+  }
+
+  api_secret_refs = {
+    DATABASE_URL         = "db-url"
+    REDIS_URL            = "redis-url"
+    SB_PLATFORM_API_CONN = "sb-platform-api-conn"
+  }
+
+  api_key_vault_secrets = {
+    db-url               = "${module.container_apps.key_vault_uri}secrets/${local.name_prefix}-${local.environment}-pg-url"
+    redis-url            = "${module.container_apps.key_vault_uri}secrets/${local.name_prefix}-${local.environment}-redis-url"
+    sb-platform-api-conn = "${module.container_apps.key_vault_uri}secrets/${local.name_prefix}-${local.environment}-sb-platform-api-conn"
+  }
 }
 
-# ── Database (Aurora PostgreSQL Serverless v2) ────────────────────────────────
+# ── Registry (ACR Standard + Service Bus) ────────────────────────────────────
+
+module "registry" {
+  source = "../../modules/registry"
+
+  name_prefix         = local.name_prefix
+  environment         = local.environment
+  resource_group_name = module.networking.resource_group_name
+  key_vault_id        = module.container_apps.key_vault_id
+
+  acr_sku = "Standard" # ~$20/mo; supports geo-replication + content trust
+  container_apps_identity_principal_id = module.container_apps.platform_identity_principal_id
+}
+
+# ── Database (PostgreSQL — production sizing) ─────────────────────────────────
 
 module "database" {
   source = "../../modules/database"
 
-  name_prefix = local.name_prefix
-  environment = local.environment
+  name_prefix         = local.name_prefix
+  environment         = local.environment
+  resource_group_name = module.networking.resource_group_name
+  database_subnet_id  = module.networking.database_subnet_id
+  key_vault_id        = module.container_apps.key_vault_id
 
-  subnet_ids         = module.networking.database_subnet_ids
-  security_group_ids = [module.networking.database_security_group_id]
-
-  database_name  = "deploycloud"
-  engine_version = "16.4"
-
-  # Production: wider capacity range for traffic spikes
-  min_capacity = 0.5
-  max_capacity = 8
-
-  backup_retention_period = 7
-  deletion_protection     = true
-  skip_final_snapshot     = false
+  pg_version                = "16"
+  sku_name                  = "GP_Standard_D2s_v3" # ~$120/mo, general purpose
+  storage_mb                = 65536                # 64 GB
+  backup_retention_days     = 7
+  geo_redundant_backup      = true
+  high_availability_enabled = true
 }
 
-# ── Cache (ElastiCache Redis) ─────────────────────────────────────────────────
+# ── Cache (Standard C1 with HA) ───────────────────────────────────────────────
 
 module "cache" {
   source = "../../modules/cache"
 
-  name_prefix = local.name_prefix
-  environment = local.environment
+  name_prefix         = local.name_prefix
+  environment         = local.environment
+  resource_group_name = module.networking.resource_group_name
+  key_vault_id        = module.container_apps.key_vault_id
 
-  subnet_ids         = module.networking.private_subnet_ids
-  security_group_ids = [module.networking.redis_security_group_id]
+  sku_name   = "Standard" # ~$90/mo with replication
+  sku_family = "C"
+  capacity   = 1          # 1 GB
 
-  engine_version = "7.1"
-  node_type      = "cache.t4g.small"
-
-  # Production: Multi-AZ with one replica for failover
-  multi_az_enabled   = true
-  num_cache_clusters = 2
-
-  snapshot_retention_limit = 3
+  # Private endpoint for production — Redis only accessible from within VNet
+  enable_private_endpoint    = true
+  private_endpoint_subnet_id = module.networking.private_endpoint_subnet_id
+  redis_private_dns_zone_id  = module.networking.redis_private_dns_zone_id
 }
 
-# ── ECS (Fargate) ─────────────────────────────────────────────────────────────
-
-module "ecs" {
-  source = "../../modules/ecs"
-
-  name_prefix = local.name_prefix
-  environment = local.environment
-
-  vpc_id                     = module.networking.vpc_id
-  public_subnet_ids          = module.networking.public_subnet_ids
-  private_subnet_ids         = module.networking.private_subnet_ids
-  alb_security_group_id      = module.networking.alb_security_group_id
-  ecs_task_security_group_id = module.networking.ecs_task_security_group_id
-
-  certificate_arn = module.dns.certificate_arn
-
-  container_image   = "${module.build.ecr_repository_url}:latest"
-  container_port    = 3000
-  health_check_path = "/health"
-
-  # Production: larger tasks, more replicas, broader scaling range
-  task_cpu      = 1024
-  task_memory   = 2048
-  desired_count = 3
-  min_capacity  = 2
-  max_capacity  = 20
-
-  # Smaller Spot weight for production to reduce interruption risk
-  fargate_spot_weight = 2
-  log_retention_days  = 90
-
-  environment_variables = {
-    NODE_ENV   = "production"
-    APP_DOMAIN = local.domain_name
-  }
-
-  secrets = {
-    DB_SECRET    = module.database.master_user_secret_arn
-    REDIS_SECRET = module.cache.auth_token_secret_arn
-  }
-}
-
-# ── DNS & Certificates ────────────────────────────────────────────────────────
+# ── DNS ───────────────────────────────────────────────────────────────────────
 
 module "dns" {
   source = "../../modules/dns"
 
-  name_prefix  = local.name_prefix
-  environment  = local.environment
-  domain_name  = local.domain_name
-  create_zone  = true
-  alb_dns_name = module.ecs.alb_dns_name
-  alb_zone_id  = module.ecs.alb_zone_id
+  name_prefix         = local.name_prefix
+  environment         = local.environment
+  resource_group_name = module.networking.resource_group_name
+  domain_name         = local.domain_name
+  create_zone         = true
+
+  container_apps_default_domain = module.container_apps.environment_default_domain
+  custom_domain_verification_id = null
 }
 
-# ── CDN (CloudFront + WAF) ────────────────────────────────────────────────────
+# ── CDN / WAF (Azure Front Door Standard) ────────────────────────────────────
+# ~$35/mo base. Skip in staging; use Cloudflare free tier as an alternative.
 
 module "cdn" {
   source = "../../modules/cdn"
 
-  providers = {
-    aws           = aws
-    aws.us_east_1 = aws.us_east_1
-  }
-
-  name_prefix  = local.name_prefix
-  environment  = local.environment
-  alb_dns_name = module.ecs.alb_dns_name
-  domain_name  = local.domain_name
-  zone_id      = module.dns.zone_id
-
-  # Production: serve from more edge locations
-  price_class    = "PriceClass_All"
-  waf_rate_limit = 2000
+  name_prefix         = local.name_prefix
+  environment         = local.environment
+  resource_group_name = module.networking.resource_group_name
+  api_fqdn            = module.container_apps.api_fqdn
+  domain_name         = local.domain_name
+  waf_rate_limit      = 2000
 }
 
 # ── Monitoring ────────────────────────────────────────────────────────────────
@@ -198,15 +181,13 @@ module "cdn" {
 module "monitoring" {
   source = "../../modules/monitoring"
 
-  name_prefix = local.name_prefix
-  environment = local.environment
+  name_prefix         = local.name_prefix
+  environment         = local.environment
+  resource_group_name = module.networking.resource_group_name
+  alerts_email        = var.alerts_email
 
-  ecs_cluster_name        = module.ecs.cluster_name
-  ecs_service_name        = module.ecs.service_name
-  alb_arn_suffix          = module.ecs.alb_arn_suffix
-  target_group_arn_suffix = module.ecs.target_group_arn_suffix
-
-  sns_email_endpoint   = var.alerts_email
+  container_app_api_id = module.container_apps.platform_identity_id
+  postgres_server_id   = module.database.server_id
   cpu_alarm_threshold  = 80
-  error_rate_threshold = 1
+  error_rate_threshold = 5
 }

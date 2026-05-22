@@ -2,172 +2,149 @@ locals {
   name_prefix = "${var.name_prefix}-${var.environment}"
 }
 
-# ── SNS Topic ─────────────────────────────────────────────────────────────────
-
-resource "aws_sns_topic" "alerts" {
-  name = "${local.name_prefix}-alerts"
+data "azurerm_resource_group" "main" {
+  name = var.resource_group_name
 }
 
-resource "aws_sns_topic_subscription" "email" {
-  topic_arn = aws_sns_topic.alerts.arn
-  protocol  = "email"
-  endpoint  = var.sns_email_endpoint
-}
+# ── Action Group (email alerts) ───────────────────────────────────────────────
 
-# ── CloudWatch Dashboard ──────────────────────────────────────────────────────
+resource "azurerm_monitor_action_group" "email" {
+  name                = "${local.name_prefix}-alerts-ag"
+  resource_group_name = var.resource_group_name
+  short_name          = "dc-alerts"
 
-resource "aws_cloudwatch_dashboard" "main" {
-  dashboard_name = local.name_prefix
-
-  dashboard_body = jsonencode({
-    widgets = [
-      {
-        type   = "metric"
-        x      = 0; y = 0; width = 12; height = 6
-        properties = {
-          title   = "ECS CPU Utilization"
-          metrics = [["AWS/ECS", "CPUUtilization", "ClusterName", var.ecs_cluster_name, "ServiceName", var.ecs_service_name]]
-          period  = 60; stat = "Average"; view = "timeSeries"
-          annotations = { horizontal = [{ value = var.cpu_alarm_threshold, label = "Alarm threshold", color = "#ff6961" }] }
-        }
-      },
-      {
-        type   = "metric"
-        x      = 12; y = 0; width = 12; height = 6
-        properties = {
-          title   = "ECS Memory Utilization"
-          metrics = [["AWS/ECS", "MemoryUtilization", "ClusterName", var.ecs_cluster_name, "ServiceName", var.ecs_service_name]]
-          period  = 60; stat = "Average"; view = "timeSeries"
-        }
-      },
-      {
-        type   = "metric"
-        x      = 0; y = 6; width = 12; height = 6
-        properties = {
-          title   = "ALB Request Count"
-          metrics = [["AWS/ApplicationELB", "RequestCount", "LoadBalancer", var.alb_arn_suffix]]
-          period  = 60; stat = "Sum"; view = "timeSeries"
-        }
-      },
-      {
-        type   = "metric"
-        x      = 12; y = 6; width = 12; height = 6
-        properties = {
-          title = "ALB 5xx Error Count"
-          metrics = [
-            ["AWS/ApplicationELB", "HTTPCode_ELB_5XX_Count", "LoadBalancer", var.alb_arn_suffix],
-            ["AWS/ApplicationELB", "HTTPCode_Target_5XX_Count", "LoadBalancer", var.alb_arn_suffix]
-          ]
-          period = 60; stat = "Sum"; view = "timeSeries"
-        }
-      },
-      {
-        type   = "metric"
-        x      = 0; y = 12; width = 12; height = 6
-        properties = {
-          title   = "ALB Healthy Host Count"
-          metrics = [["AWS/ApplicationELB", "HealthyHostCount", "LoadBalancer", var.alb_arn_suffix, "TargetGroup", var.target_group_arn_suffix]]
-          period  = 60; stat = "Minimum"; view = "timeSeries"
-        }
-      },
-      {
-        type   = "metric"
-        x      = 12; y = 12; width = 12; height = 6
-        properties = {
-          title   = "ALB Target Response Time (p99)"
-          metrics = [["AWS/ApplicationELB", "TargetResponseTime", "LoadBalancer", var.alb_arn_suffix]]
-          period  = 60; stat = "p99"; view = "timeSeries"
-        }
-      }
-    ]
-  })
-}
-
-# ── CloudWatch Alarms ─────────────────────────────────────────────────────────
-
-resource "aws_cloudwatch_metric_alarm" "ecs_cpu_high" {
-  alarm_name          = "${local.name_prefix}-ecs-cpu-high"
-  alarm_description   = "ECS CPU utilization is above ${var.cpu_alarm_threshold}%"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = var.alarm_evaluation_periods
-  metric_name         = "CPUUtilization"
-  namespace           = "AWS/ECS"
-  period              = 60
-  statistic           = "Average"
-  threshold           = var.cpu_alarm_threshold
-  treat_missing_data  = "notBreaching"
-
-  dimensions = {
-    ClusterName = var.ecs_cluster_name
-    ServiceName = var.ecs_service_name
+  email_receiver {
+    name                    = "platform-team"
+    email_address           = var.alerts_email
+    use_common_alert_schema = true
   }
 
-  alarm_actions = [aws_sns_topic.alerts.arn]
-  ok_actions    = [aws_sns_topic.alerts.arn]
+  tags = {
+    Environment = var.environment
+    Project     = var.name_prefix
+    ManagedBy   = "terraform"
+  }
 }
 
-resource "aws_cloudwatch_metric_alarm" "alb_5xx_rate" {
-  alarm_name          = "${local.name_prefix}-alb-5xx-rate"
-  alarm_description   = "ALB 5xx error rate exceeds ${var.error_rate_threshold}%"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = var.alarm_evaluation_periods
-  threshold           = var.error_rate_threshold
-  treat_missing_data  = "notBreaching"
+# ── Container App CPU alert ───────────────────────────────────────────────────
 
-  metric_query {
-    id          = "error_rate"
-    expression  = "IF(requests > 0, errors / requests * 100, 0)"
-    label       = "5xx Error Rate (%)"
-    return_data = true
+resource "azurerm_monitor_metric_alert" "api_cpu" {
+  name                = "${local.name_prefix}-api-cpu-high"
+  resource_group_name = var.resource_group_name
+  scopes              = [var.container_app_api_id]
+  description         = "Platform API CPU utilization is above ${var.cpu_alarm_threshold}%"
+  severity            = 2
+  frequency           = "PT1M"
+  window_size         = "PT5M"
+
+  criteria {
+    metric_namespace = "Microsoft.App/containerApps"
+    metric_name      = "CpuUsage"
+    aggregation      = "Average"
+    operator         = "GreaterThan"
+    threshold        = var.cpu_alarm_threshold
   }
 
-  metric_query {
-    id = "errors"
-    metric {
-      namespace   = "AWS/ApplicationELB"
-      metric_name = "HTTPCode_ELB_5XX_Count"
-      period      = 60
-      stat        = "Sum"
-      dimensions = {
-        LoadBalancer = var.alb_arn_suffix
-      }
+  action {
+    action_group_id = azurerm_monitor_action_group.email.id
+  }
+
+  tags = {
+    Environment = var.environment
+    ManagedBy   = "terraform"
+  }
+}
+
+# ── Container App memory alert ────────────────────────────────────────────────
+
+resource "azurerm_monitor_metric_alert" "api_memory" {
+  name                = "${local.name_prefix}-api-memory-high"
+  resource_group_name = var.resource_group_name
+  scopes              = [var.container_app_api_id]
+  description         = "Platform API memory utilization is above 85%"
+  severity            = 2
+  frequency           = "PT1M"
+  window_size         = "PT5M"
+
+  criteria {
+    metric_namespace = "Microsoft.App/containerApps"
+    metric_name      = "MemoryUsage"
+    aggregation      = "Average"
+    operator         = "GreaterThan"
+    threshold        = 85
+  }
+
+  action {
+    action_group_id = azurerm_monitor_action_group.email.id
+  }
+
+  tags = {
+    Environment = var.environment
+    ManagedBy   = "terraform"
+  }
+}
+
+# ── HTTP 5xx error rate alert ─────────────────────────────────────────────────
+
+resource "azurerm_monitor_metric_alert" "api_5xx" {
+  name                = "${local.name_prefix}-api-5xx-rate"
+  resource_group_name = var.resource_group_name
+  scopes              = [var.container_app_api_id]
+  description         = "Platform API 5xx error rate is elevated"
+  severity            = 1
+  frequency           = "PT1M"
+  window_size         = "PT5M"
+
+  criteria {
+    metric_namespace = "Microsoft.App/containerApps"
+    metric_name      = "Requests"
+    aggregation      = "Count"
+    operator         = "GreaterThan"
+    threshold        = var.error_rate_threshold
+
+    dimension {
+      name     = "statusCodeCategory"
+      operator = "Include"
+      values   = ["5xx"]
     }
   }
 
-  metric_query {
-    id = "requests"
-    metric {
-      namespace   = "AWS/ApplicationELB"
-      metric_name = "RequestCount"
-      period      = 60
-      stat        = "Sum"
-      dimensions = {
-        LoadBalancer = var.alb_arn_suffix
-      }
-    }
+  action {
+    action_group_id = azurerm_monitor_action_group.email.id
   }
 
-  alarm_actions = [aws_sns_topic.alerts.arn]
-  ok_actions    = [aws_sns_topic.alerts.arn]
+  tags = {
+    Environment = var.environment
+    ManagedBy   = "terraform"
+  }
 }
 
-resource "aws_cloudwatch_metric_alarm" "unhealthy_hosts" {
-  alarm_name          = "${local.name_prefix}-unhealthy-hosts"
-  alarm_description   = "One or more ECS tasks are unhealthy in the ALB target group"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 1
-  metric_name         = "UnHealthyHostCount"
-  namespace           = "AWS/ApplicationELB"
-  period              = 60
-  statistic           = "Maximum"
-  threshold           = 0
-  treat_missing_data  = "notBreaching"
+# ── PostgreSQL storage alert ──────────────────────────────────────────────────
 
-  dimensions = {
-    LoadBalancer = var.alb_arn_suffix
-    TargetGroup  = var.target_group_arn_suffix
+resource "azurerm_monitor_metric_alert" "db_storage" {
+  count               = var.postgres_server_id != null ? 1 : 0
+  name                = "${local.name_prefix}-db-storage-high"
+  resource_group_name = var.resource_group_name
+  scopes              = [var.postgres_server_id]
+  description         = "PostgreSQL storage utilization is above 80%"
+  severity            = 2
+  frequency           = "PT5M"
+  window_size         = "PT15M"
+
+  criteria {
+    metric_namespace = "Microsoft.DBforPostgreSQL/flexibleServers"
+    metric_name      = "storage_percent"
+    aggregation      = "Average"
+    operator         = "GreaterThan"
+    threshold        = 80
   }
 
-  alarm_actions = [aws_sns_topic.alerts.arn]
-  ok_actions    = [aws_sns_topic.alerts.arn]
+  action {
+    action_group_id = azurerm_monitor_action_group.email.id
+  }
+
+  tags = {
+    Environment = var.environment
+    ManagedBy   = "terraform"
+  }
 }

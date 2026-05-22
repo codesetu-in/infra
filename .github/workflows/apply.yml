@@ -14,7 +14,7 @@ permissions:
 
 concurrency:
   group: terraform-apply
-  cancel-in-progress: false # Never cancel an in-progress apply
+  cancel-in-progress: false
 
 jobs:
   # ── Staging (auto-approve on merge) ──────────────────────────────────────────
@@ -31,11 +31,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials (staging)
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Azure Login (staging)
+        uses: azure/login@v2
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN_STAGING }}
-          aws-region: us-east-1
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          use-oidc: true
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -55,8 +57,6 @@ jobs:
   apply-production:
     name: Apply / production
     runs-on: ubuntu-latest
-    # The "production" GitHub environment must have a required reviewer configured
-    # in repository Settings → Environments to enforce manual approval.
     environment: production
     needs: [apply-staging]
     env:
@@ -68,11 +68,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials (production)
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Azure Login (production)
+        uses: azure/login@v2
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN_PRODUCTION }}
-          aws-region: us-east-1
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          use-oidc: true
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3

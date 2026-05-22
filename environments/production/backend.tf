@@ -1,10 +1,9 @@
 terraform {
-  backend "s3" {
-    # Replace ACCOUNT_ID with your 12-digit AWS account ID after running bootstrap
-    bucket         = "deploycloud-tfstate-ACCOUNT_ID"
-    key            = "production/terraform.tfstate"
-    region         = "us-east-1"
-    dynamodb_table = "deploycloud-tfstate-locks"
-    encrypt        = true
+  backend "azurerm" {
+    resource_group_name  = "deploycloud-tfstate-rg"
+    storage_account_name = "REPLACE_WITH_BOOTSTRAP_OUTPUT"
+    container_name       = "tfstate"
+    key                  = "production/terraform.tfstate"
+    use_oidc             = true
   }
 }

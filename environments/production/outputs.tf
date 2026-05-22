@@ -1,51 +1,76 @@
-output "vpc_id" {
-  description = "VPC ID"
-  value       = module.networking.vpc_id
+output "resource_group_name" {
+  description = "Production resource group name"
+  value       = module.networking.resource_group_name
 }
 
-output "alb_dns_name" {
-  description = "ALB DNS name"
-  value       = module.ecs.alb_dns_name
+output "vnet_id" {
+  description = "Virtual Network ID"
+  value       = module.networking.vnet_id
 }
 
-output "cloudfront_domain" {
-  description = "CloudFront distribution domain"
-  value       = module.cdn.distribution_domain_name
+output "container_apps_environment_name" {
+  description = "Container Apps Environment name"
+  value       = module.container_apps.environment_name
 }
 
-output "ecr_repository_url" {
-  description = "ECR repository URL for CI/CD"
-  value       = module.build.ecr_repository_url
+output "api_fqdn" {
+  description = "Platform API Container App FQDN"
+  value       = module.container_apps.api_fqdn
 }
 
-output "database_endpoint" {
-  description = "Aurora writer endpoint"
-  value       = module.database.cluster_endpoint
+output "dashboard_fqdn" {
+  description = "Platform Dashboard Container App FQDN"
+  value       = module.container_apps.dashboard_fqdn
+}
+
+output "acr_login_server" {
+  description = "ACR login server for CI/CD image push"
+  value       = module.registry.acr_login_server
+}
+
+output "acr_name" {
+  description = "ACR registry name"
+  value       = module.registry.acr_name
+}
+
+output "key_vault_uri" {
+  description = "Key Vault vault URI"
+  value       = module.container_apps.key_vault_uri
+}
+
+output "platform_identity_client_id" {
+  description = "Managed identity client ID — set as AZURE_CLIENT_ID in production GitHub Environment secrets"
+  value       = module.container_apps.platform_identity_client_id
+}
+
+output "database_fqdn" {
+  description = "PostgreSQL Flexible Server FQDN"
+  value       = module.database.fqdn
   sensitive   = true
 }
 
-output "redis_endpoint" {
-  description = "Redis primary endpoint"
-  value       = module.cache.primary_endpoint_address
+output "redis_hostname" {
+  description = "Azure Cache for Redis hostname"
+  value       = module.cache.hostname
   sensitive   = true
 }
 
-output "ecs_cluster_name" {
-  description = "ECS cluster name"
-  value       = module.ecs.cluster_name
-}
-
-output "ecs_service_name" {
-  description = "ECS service name"
-  value       = module.ecs.service_name
-}
-
-output "name_servers" {
-  description = "Route53 name servers — update your domain registrar with these"
+output "dns_name_servers" {
+  description = "Azure DNS zone name servers — update your domain registrar with these"
   value       = module.dns.name_servers
 }
 
-output "waf_web_acl_arn" {
-  description = "WAF web ACL ARN for the CloudFront distribution"
-  value       = module.cdn.waf_web_acl_arn
+output "log_analytics_workspace_id" {
+  description = "Log Analytics Workspace resource ID"
+  value       = module.container_apps.log_analytics_workspace_id
+}
+
+output "frontdoor_endpoint_fqdn" {
+  description = "Azure Front Door endpoint FQDN (production CDN/WAF ingress)"
+  value       = module.cdn.frontdoor_endpoint_fqdn
+}
+
+output "frontdoor_profile_id" {
+  description = "Azure Front Door profile resource ID"
+  value       = module.cdn.frontdoor_profile_id
 }

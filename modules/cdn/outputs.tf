@@ -1,34 +1,14 @@
-output "distribution_id" {
-  description = "CloudFront distribution ID"
-  value       = aws_cloudfront_distribution.main.id
+output "frontdoor_profile_id" {
+  description = "Azure Front Door profile resource ID"
+  value       = azurerm_cdn_frontdoor_profile.main.id
 }
 
-output "distribution_arn" {
-  description = "CloudFront distribution ARN"
-  value       = aws_cloudfront_distribution.main.arn
+output "frontdoor_endpoint_fqdn" {
+  description = "Front Door endpoint hostname"
+  value       = azurerm_cdn_frontdoor_endpoint.main.host_name
 }
 
-output "distribution_domain_name" {
-  description = "CloudFront distribution domain name"
-  value       = aws_cloudfront_distribution.main.domain_name
-}
-
-output "distribution_hosted_zone_id" {
-  description = "Route53 hosted zone ID for the CloudFront distribution"
-  value       = aws_cloudfront_distribution.main.hosted_zone_id
-}
-
-output "waf_web_acl_arn" {
-  description = "WAF web ACL ARN"
-  value       = aws_wafv2_web_acl.main.arn
-}
-
-output "waf_web_acl_id" {
-  description = "WAF web ACL ID"
-  value       = aws_wafv2_web_acl.main.id
-}
-
-output "cloudfront_certificate_arn" {
-  description = "ACM certificate ARN used by CloudFront (us-east-1)"
-  value       = aws_acm_certificate_validation.cloudfront.certificate_arn
+output "waf_policy_id" {
+  description = "WAF firewall policy resource ID"
+  value       = azurerm_cdn_frontdoor_firewall_policy.main.id
 }

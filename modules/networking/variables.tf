@@ -18,62 +18,37 @@ variable "environment" {
   }
 }
 
-variable "vpc_cidr" {
-  description = "CIDR block for the VPC"
+variable "azure_region" {
+  description = "Azure region for all resources"
+  type        = string
+  default     = "eastus"
+}
+
+variable "vnet_cidr" {
+  description = "Address space for the Virtual Network"
   type        = string
   default     = "10.0.0.0/16"
 
   validation {
-    condition     = can(cidrnetmask(var.vpc_cidr))
+    condition     = can(cidrnetmask(var.vnet_cidr))
     error_message = "Must be a valid CIDR block."
   }
 }
 
-variable "azs" {
-  description = "List of exactly two Availability Zone names"
-  type        = list(string)
-
-  validation {
-    condition     = length(var.azs) == 2
-    error_message = "Exactly two Availability Zones are required."
-  }
+variable "container_apps_subnet_cidr" {
+  description = "CIDR for Container Apps Environment dedicated subnet (min /27, recommended /23)"
+  type        = string
+  default     = "10.0.0.0/23"
 }
 
-variable "public_subnet_cidrs" {
-  description = "CIDR blocks for public subnets (one per AZ)"
-  type        = list(string)
-  default     = ["10.0.1.0/24", "10.0.2.0/24"]
-
-  validation {
-    condition     = length(var.public_subnet_cidrs) == 2
-    error_message = "Exactly two public subnet CIDRs are required."
-  }
+variable "database_subnet_cidr" {
+  description = "CIDR for the PostgreSQL Flexible Server delegated subnet"
+  type        = string
+  default     = "10.0.4.0/24"
 }
 
-variable "private_subnet_cidrs" {
-  description = "CIDR blocks for private (app) subnets (one per AZ)"
-  type        = list(string)
-  default     = ["10.0.10.0/24", "10.0.11.0/24"]
-
-  validation {
-    condition     = length(var.private_subnet_cidrs) == 2
-    error_message = "Exactly two private subnet CIDRs are required."
-  }
-}
-
-variable "database_subnet_cidrs" {
-  description = "CIDR blocks for isolated database subnets (one per AZ)"
-  type        = list(string)
-  default     = ["10.0.20.0/24", "10.0.21.0/24"]
-
-  validation {
-    condition     = length(var.database_subnet_cidrs) == 2
-    error_message = "Exactly two database subnet CIDRs are required."
-  }
-}
-
-variable "single_nat_gateway" {
-  description = "Use a single NAT gateway for all AZs (reduces cost for non-prod)"
-  type        = bool
-  default     = true
+variable "private_endpoint_subnet_cidr" {
+  description = "CIDR for private endpoints subnet (Redis in production)"
+  type        = string
+  default     = "10.0.5.0/24"
 }

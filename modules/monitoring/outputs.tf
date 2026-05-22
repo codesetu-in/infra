@@ -1,29 +1,14 @@
-output "sns_topic_arn" {
-  description = "ARN of the SNS alerts topic"
-  value       = aws_sns_topic.alerts.arn
+output "action_group_id" {
+  description = "Monitor Action Group resource ID"
+  value       = azurerm_monitor_action_group.email.id
 }
 
-output "sns_topic_name" {
-  description = "Name of the SNS alerts topic"
-  value       = aws_sns_topic.alerts.name
+output "cpu_alert_id" {
+  description = "CPU utilization metric alert resource ID"
+  value       = azurerm_monitor_metric_alert.api_cpu.id
 }
 
-output "dashboard_name" {
-  description = "CloudWatch dashboard name"
-  value       = aws_cloudwatch_dashboard.main.dashboard_name
-}
-
-output "cpu_alarm_arn" {
-  description = "ARN of the ECS CPU alarm"
-  value       = aws_cloudwatch_metric_alarm.ecs_cpu_high.arn
-}
-
-output "alb_5xx_alarm_arn" {
-  description = "ARN of the ALB 5xx rate alarm"
-  value       = aws_cloudwatch_metric_alarm.alb_5xx_rate.arn
-}
-
-output "unhealthy_hosts_alarm_arn" {
-  description = "ARN of the unhealthy hosts alarm"
-  value       = aws_cloudwatch_metric_alarm.unhealthy_hosts.arn
+output "memory_alert_id" {
+  description = "Memory utilization metric alert resource ID"
+  value       = azurerm_monitor_metric_alert.api_memory.id
 }

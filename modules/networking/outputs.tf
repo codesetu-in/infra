@@ -1,49 +1,44 @@
-output "vpc_id" {
-  description = "VPC ID"
-  value       = aws_vpc.main.id
+output "resource_group_name" {
+  description = "Name of the main resource group"
+  value       = azurerm_resource_group.main.name
 }
 
-output "vpc_cidr_block" {
-  description = "VPC CIDR block"
-  value       = aws_vpc.main.cidr_block
+output "resource_group_location" {
+  description = "Location of the main resource group"
+  value       = azurerm_resource_group.main.location
 }
 
-output "public_subnet_ids" {
-  description = "IDs of the public subnets"
-  value       = aws_subnet.public[*].id
+output "vnet_id" {
+  description = "Virtual Network ID"
+  value       = azurerm_virtual_network.main.id
 }
 
-output "private_subnet_ids" {
-  description = "IDs of the private (app) subnets"
-  value       = aws_subnet.private[*].id
+output "vnet_name" {
+  description = "Virtual Network name"
+  value       = azurerm_virtual_network.main.name
 }
 
-output "database_subnet_ids" {
-  description = "IDs of the isolated database subnets"
-  value       = aws_subnet.database[*].id
+output "container_apps_subnet_id" {
+  description = "Subnet ID for Container Apps Environment"
+  value       = azurerm_subnet.container_apps.id
 }
 
-output "nat_gateway_ids" {
-  description = "IDs of the NAT gateways"
-  value       = aws_nat_gateway.main[*].id
+output "database_subnet_id" {
+  description = "Subnet ID for PostgreSQL Flexible Server"
+  value       = azurerm_subnet.database.id
 }
 
-output "alb_security_group_id" {
-  description = "Security group ID for the Application Load Balancer"
-  value       = aws_security_group.alb.id
+output "private_endpoint_subnet_id" {
+  description = "Subnet ID for private endpoints"
+  value       = azurerm_subnet.private_endpoints.id
 }
 
-output "ecs_task_security_group_id" {
-  description = "Security group ID for ECS Fargate tasks"
-  value       = aws_security_group.ecs_tasks.id
+output "postgres_private_dns_zone_id" {
+  description = "Private DNS zone ID for PostgreSQL"
+  value       = azurerm_private_dns_zone.postgres.id
 }
 
-output "database_security_group_id" {
-  description = "Security group ID for Aurora PostgreSQL"
-  value       = aws_security_group.database.id
-}
-
-output "redis_security_group_id" {
-  description = "Security group ID for ElastiCache Redis"
-  value       = aws_security_group.redis.id
+output "redis_private_dns_zone_id" {
+  description = "Private DNS zone ID for Redis"
+  value       = azurerm_private_dns_zone.redis.id
 }

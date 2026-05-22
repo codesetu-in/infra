@@ -1,24 +1,24 @@
-output "state_bucket_name" {
-  description = "S3 bucket name for Terraform remote state"
-  value       = aws_s3_bucket.terraform_state.bucket
+output "storage_account_name" {
+  description = "Azure Storage Account name for Terraform remote state"
+  value       = azurerm_storage_account.tfstate.name
 }
 
-output "state_bucket_arn" {
-  description = "S3 bucket ARN for Terraform remote state"
-  value       = aws_s3_bucket.terraform_state.arn
+output "storage_container_name" {
+  description = "Blob container name for Terraform remote state"
+  value       = azurerm_storage_container.tfstate.name
 }
 
-output "dynamodb_table_name" {
-  description = "DynamoDB table name used for state locking"
-  value       = aws_dynamodb_table.terraform_locks.name
+output "resource_group_name" {
+  description = "Resource group containing the Terraform state storage account"
+  value       = azurerm_resource_group.tfstate.name
 }
 
-output "kms_key_arn" {
-  description = "KMS key ARN used to encrypt state bucket and DynamoDB table"
-  value       = aws_kms_key.terraform_state.arn
+output "key_vault_uri" {
+  description = "Key Vault URI for bootstrap secrets"
+  value       = azurerm_key_vault.bootstrap.vault_uri
 }
 
-output "kms_key_alias" {
-  description = "KMS key alias"
-  value       = aws_kms_alias.terraform_state.name
+output "key_vault_name" {
+  description = "Key Vault name"
+  value       = azurerm_key_vault.bootstrap.name
 }
